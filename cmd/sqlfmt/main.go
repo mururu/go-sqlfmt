@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"go/printer"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/kanmu/go-sqlfmt"
+	"golang.org/x/tools/imports"
 )
 
 var (
@@ -42,18 +45,35 @@ func main() {
 		log.Println(err)
 	}
 
+	var buf bytes.Buffer
 	cfg := printer.Config{Mode: printerMode, Tabwidth: tabWidth}
+	err = cfg.Fprint(io.Writer(&buf), sfmt.Fset, sfmt.AstNode)
+	if err != nil {
+		log.Fatal(err)
+	}
+	sqlFormatted := buf.Bytes()
+
+	importsFormatted, err := imports.Process(*srcFile, sqlFormatted, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	if *outputFile == "" {
-		cfg.Fprint(os.Stdout, sfmt.Fset, sfmt.AstNode)
+		if _, err := os.Stdout.Write(importsFormatted); err != nil {
+			log.Fatal(err)
+		}
+		if os.Stdout.Sync(); err != nil {
+			log.Fatal(err)
+		}
 	} else {
-		if err = writeFile(*outputFile, cfg, sfmt); err != nil {
+		if err = writeFile(*outputFile, importsFormatted); err != nil {
 			log.Fatal(err)
 		}
 	}
 }
 
 // atomic write
-func writeFile(filename string, cfg printer.Config, sfmt *sqlfmt.SQLFormatter) error {
+func writeFile(filename string, bytes []byte) error {
 	tmpFile, err := filepath.Abs(filename + ".")
 	if err != nil {
 		return err
@@ -62,8 +82,8 @@ func writeFile(filename string, cfg printer.Config, sfmt *sqlfmt.SQLFormatter) e
 	if err != nil {
 		return err
 	}
-	if err := cfg.Fprint(f, sfmt.Fset, sfmt.AstNode); err != nil {
-		return err
+	if _, err := f.Write(bytes); err != nil {
+		log.Fatal(err)
 	}
 	if err := f.Close(); err != nil {
 		return err
